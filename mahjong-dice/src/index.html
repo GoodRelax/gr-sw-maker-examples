@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>麻雀サイコロ</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #1a5c2a;
+      background-image:
+        radial-gradient(ellipse at center, #1e6b30 0%, #14492a 70%);
+      font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+      color: #fff;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow: hidden;
+    }
+
+    .dice-table {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      position: relative;
+    }
+
+    .dice-table__title {
+      font-size: 1.5rem;
+      letter-spacing: 0.1em;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+
+    /* サイコロ演出エリア */
+    .dice-stage {
+      width: 300px;
+      height: 200px;
+      position: relative;
+      perspective: 800px;
+    }
+
+    /* 各サイコロのラッパー（位置制御用） */
+    .dice-actor {
+      position: absolute;
+      width: 70px;
+      height: 70px;
+      /* 初期位置: 画面上方・非表示 */
+      top: -120px;
+      opacity: 0;
+    }
+
+    .dice-actor--left {
+      left: 50px;
+    }
+
+    .dice-actor--right {
+      right: 50px;
+    }
+
+    /* 3Dキューブ */
+    .dice-cube {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transform-style: preserve-3d;
+    }
+
+    .dice-face {
+      position: absolute;
+      width: 70px;
+      height: 70px;
+      background: #fff;
+      border-radius: 8px;
+      border: 1.5px solid #ddd;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      padding: 7px;
+    }
+
+    .dice-face--front  { transform: rotateY(0deg) translateZ(35px); }
+    .dice-face--back   { transform: rotateY(180deg) translateZ(35px); }
+    .dice-face--right  { transform: rotateY(90deg) translateZ(35px); }
+    .dice-face--left   { transform: rotateY(-90deg) translateZ(35px); }
+    .dice-face--top    { transform: rotateX(90deg) translateZ(35px); }
+    .dice-face--bottom { transform: rotateX(-90deg) translateZ(35px); }
+
+    .dice-pip {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .dice-pip--filled::after {
+      content: '';
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #333;
+      box-shadow: inset 1px 1px 2px rgba(0,0,0,0.3);
+    }
+
+    .dice-pip--red::after {
+      background: #c0392b;
+    }
+
+    /* 影 */
+    .dice-shadow {
+      position: absolute;
+      width: 50px;
+      height: 8px;
+      background: rgba(0,0,0,0.25);
+      border-radius: 50%;
+      bottom: 20px;
+      opacity: 0;
+    }
+
+    .dice-shadow--left { left: 60px; }
+    .dice-shadow--right { right: 60px; }
+
+    /* 合計表示 */
+    .dice-table__total {
+      font-size: 2.5rem;
+      font-weight: bold;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+      min-height: 3.5rem;
+      transition: transform 0.3s ease, opacity 0.3s ease;
+    }
+
+    .dice-table__total--zoom {
+      animation: zoom-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes zoom-in {
+      0%   { transform: scale(0.3); opacity: 0; }
+      60%  { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .dice-table__roll-button {
+      padding: 16px 48px;
+      font-size: 1.2rem;
+      background: #c0392b;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      letter-spacing: 0.1em;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .dice-table__roll-button:hover {
+      background: #e74c3c;
+    }
+
+    .dice-table__roll-button:active {
+      transform: scale(0.95);
+    }
+
+    .dice-table__roll-button:disabled {
+      background: #666;
+      cursor: not-allowed;
+    }
+
+    @media (min-width: 600px) {
+      .dice-stage {
+        width: 400px;
+        height: 220px;
+      }
+
+      .dice-actor {
+        width: 90px;
+        height: 90px;
+      }
+
+      .dice-face {
+        width: 90px;
+        height: 90px;
+        padding: 9px;
+      }
+
+      .dice-face--front  { transform: rotateY(0deg) translateZ(45px); }
+      .dice-face--back   { transform: rotateY(180deg) translateZ(45px); }
+      .dice-face--right  { transform: rotateY(90deg) translateZ(45px); }
+      .dice-face--left   { transform: rotateY(-90deg) translateZ(45px); }
+      .dice-face--top    { transform: rotateX(90deg) translateZ(45px); }
+      .dice-face--bottom { transform: rotateX(-90deg) translateZ(45px); }
+
+      .dice-pip--filled::after {
+        width: 14px;
+        height: 14px;
+      }
+
+      .dice-actor--left { left: 70px; }
+      .dice-actor--right { right: 70px; }
+      .dice-shadow--left { left: 80px; }
+      .dice-shadow--right { right: 80px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="dice-table">
+    <h1 class="dice-table__title">麻雀サイコロ</h1>
+
+    <div class="dice-stage" id="stage">
+      <div class="dice-actor dice-actor--left" id="actor1">
+        <div class="dice-cube" id="cube1"></div>
+      </div>
+      <div class="dice-actor dice-actor--right" id="actor2">
+        <div class="dice-cube" id="cube2"></div>
+      </div>
+      <div class="dice-shadow dice-shadow--left" id="shadow1"></div>
+      <div class="dice-shadow dice-shadow--right" id="shadow2"></div>
+    </div>
+
+    <div class="dice-table__total" id="total"></div>
+
+    <button class="dice-table__roll-button" id="rollButton">振る</button>
+  </div>
+
+  <script>
+    /**
+     * サイコロの出目に対応する pip の位置を返す
+     * @param {number} faceValue - 出目（1〜6）
+     * @returns {number[]}
+     */
+    function pipPositionsForFace(faceValue) {
+      const pipMap = {
+        1: [4],
+        2: [2, 6],
+        3: [2, 4, 6],
+        4: [0, 2, 6, 8],
+        5: [0, 2, 4, 6, 8],
+        6: [0, 2, 3, 5, 6, 8],
+      };
+      return pipMap[faceValue] || [];
+    }
+
+    /**
+     * サイコロの面HTMLを生成する
+     * @param {number} faceValue - 出目
+     * @param {string} faceClass - CSSクラス
+     * @returns {string}
+     */
+    function createFaceHTML(faceValue, faceClass) {
+      const positions = pipPositionsForFace(faceValue);
+      let html = `<div class="dice-face ${faceClass}">`;
+      for (let i = 0; i < 9; i++) {
+        let cls = 'dice-pip';
+        if (positions.includes(i)) {
+          cls += ' dice-pip--filled';
+          if (faceValue === 1) cls += ' dice-pip--red';
+        }
+        html += `<div class="${cls}"></div>`;
+      }
+      return html + '</div>';
+    }
+
+    /**
+     * 3Dサイコロの6面を描画する（対面合計=7）
+     * @param {HTMLElement} cubeElement
+     */
+    function renderDiceCube(cubeElement) {
+      cubeElement.innerHTML =
+        createFaceHTML(1, 'dice-face--front') +
+        createFaceHTML(6, 'dice-face--back') +
+        createFaceHTML(3, 'dice-face--right') +
+        createFaceHTML(4, 'dice-face--left') +
+        createFaceHTML(2, 'dice-face--top') +
+        createFaceHTML(5, 'dice-face--bottom');
+    }
+
+    /**
+     * 出目に対応する回転角度を返す
+     * @param {number} faceValue - 出目（1〜6）
+     * @returns {{x: number, y: number}}
+     */
+    function rotationForFace(faceValue) {
+      return {
+        1: { x: 0, y: 0 },
+        2: { x: -90, y: 0 },
+        3: { x: 0, y: -90 },
+        4: { x: 0, y: 90 },
+        5: { x: 90, y: 0 },
+        6: { x: 0, y: 180 },
+      }[faceValue];
+    }
+
+    /**
+     * 1〜6 のランダム整数
+     * @returns {number}
+     */
+    function rollSingleDice() {
+      return Math.floor(Math.random() * 6) + 1;
+    }
+
+    /**
+     * easeOutBounce 関数
+     * @param {number} t - 0〜1 の進行度
+     * @returns {number}
+     */
+    function easeOutBounce(t) {
+      if (t < 1 / 2.75) {
+        return 7.5625 * t * t;
+      } else if (t < 2 / 2.75) {
+        t -= 1.5 / 2.75;
+        return 7.5625 * t * t + 0.75;
+      } else if (t < 2.5 / 2.75) {
+        t -= 2.25 / 2.75;
+        return 7.5625 * t * t + 0.9375;
+      } else {
+        t -= 2.625 / 2.75;
+        return 7.5625 * t * t + 0.984375;
+      }
+    }
+
+    const actor1 = document.getElementById('actor1');
+    const actor2 = document.getElementById('actor2');
+    const cube1 = document.getElementById('cube1');
+    const cube2 = document.getElementById('cube2');
+    const shadow1 = document.getElementById('shadow1');
+    const shadow2 = document.getElementById('shadow2');
+    const totalDisplay = document.getElementById('total');
+    const rollButton = document.getElementById('rollButton');
+
+    renderDiceCube(cube1);
+    renderDiceCube(cube2);
+
+    // 初期状態: サイコロを着地位置に表示
+    const restY = 90; // 着地Y位置
+    actor1.style.top = restY + 'px';
+    actor2.style.top = restY + 'px';
+    actor1.style.opacity = '1';
+    actor2.style.opacity = '1';
+    shadow1.style.opacity = '0.25';
+    shadow2.style.opacity = '0.25';
+
+    const initRot = rotationForFace(1);
+    cube1.style.transform = `rotateX(${initRot.x}deg) rotateY(${initRot.y}deg)`;
+    cube2.style.transform = `rotateX(${initRot.x}deg) rotateY(${initRot.y}deg)`;
+
+    /**
+     * サイコロ振りアニメーションを実行する
+     */
+    function animateDiceRoll() {
+      rollButton.disabled = true;
+      totalDisplay.textContent = '';
+      totalDisplay.classList.remove('dice-table__total--zoom');
+
+      const face1 = rollSingleDice();
+      const face2 = rollSingleDice();
+      const finalRot1 = rotationForFace(face1);
+      const finalRot2 = rotationForFace(face2);
+
+      // 各サイコロのランダムな横移動量
+      const drift1 = (Math.random() - 0.5) * 30;
+      const drift2 = (Math.random() - 0.5) * 30;
+
+      const dropStartY = -100;        // 落下開始Y
+      const landY = restY;            // 着地Y
+      const totalDuration = 1600;     // 全体の演出時間（ms）
+      const dropDuration = 500;       // 落下フェーズ
+      const rollDuration = 800;       // コロコロフェーズ
+      const zoomDelay = 300;          // ズーム前の間
+
+      // 回転の総量（ゴロゴロ感: 多めに回す）
+      const totalSpinX1 = 360 * 3 + finalRot1.x;
+      const totalSpinY1 = 360 * 2 + finalRot1.y;
+      const totalSpinX2 = 360 * 2 + finalRot2.x;
+      const totalSpinY2 = 360 * 3 + finalRot2.y;
+
+      // 落下開始位置にセット
+      actor1.style.top = dropStartY + 'px';
+      actor2.style.top = dropStartY + 'px';
+      actor1.style.opacity = '1';
+      actor2.style.opacity = '1';
+      shadow1.style.opacity = '0';
+      shadow2.style.opacity = '0';
+
+      cube1.style.transform = 'rotateX(0deg) rotateY(0deg)';
+      cube2.style.transform = 'rotateX(0deg) rotateY(0deg)';
+
+      const FRAME_INTERVAL = 16; // ~60fps
+      const startTime = Date.now();
+
+      // 落下開始位置にセット
+      actor1.style.top = dropStartY + 'px';
+      actor2.style.top = dropStartY + 'px';
+
+      const animTimer = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const totalAnimTime = dropDuration + rollDuration;
+
+        if (elapsed < dropDuration) {
+          // Phase 1: 落下（上から降ってくる）
+          const dropProgress = Math.min(elapsed / dropDuration, 1);
+          const bounceProgress = easeOutBounce(dropProgress);
+
+          const currentY = dropStartY + (landY - dropStartY) * bounceProgress;
+          actor1.style.top = currentY + 'px';
+          actor2.style.top = (currentY + 10 * (1 - dropProgress)) + 'px';
+
+          // 落下中も回転
+          cube1.style.transform = `rotateX(${dropProgress * 360}deg) rotateY(${dropProgress * 180}deg)`;
+          cube2.style.transform = `rotateX(${dropProgress * 270}deg) rotateY(${dropProgress * 360}deg)`;
+
+          // 影: 地面に近づくほど濃く大きく
+          const shadowOpacity = bounceProgress * 0.25;
+          shadow1.style.opacity = shadowOpacity;
+          shadow2.style.opacity = shadowOpacity;
+          const shadowScale = 0.5 + bounceProgress * 0.5;
+          shadow1.style.transform = `scaleX(${shadowScale})`;
+          shadow2.style.transform = `scaleX(${shadowScale})`;
+
+        } else if (elapsed < totalAnimTime) {
+          // Phase 2: コロコロ転がる（減速しながら）
+          const rollElapsed = elapsed - dropDuration;
+          const rollProgress = Math.min(rollElapsed / rollDuration, 1);
+
+          // 減速カーブ
+          const decelProgress = 1 - Math.pow(1 - rollProgress, 2.5);
+
+          // 回転
+          cube1.style.transform = `rotateX(${360 + decelProgress * (totalSpinX1 - 360)}deg) rotateY(${180 + decelProgress * (totalSpinY1 - 180)}deg)`;
+          cube2.style.transform = `rotateX(${270 + decelProgress * (totalSpinX2 - 270)}deg) rotateY(${360 + decelProgress * (totalSpinY2 - 360)}deg)`;
+
+          // 横移動
+          const baseLeft1 = 50;
+          const baseRight2 = 50;
+          actor1.style.left = (baseLeft1 + drift1 * decelProgress) + 'px';
+          actor2.style.right = (baseRight2 + drift2 * decelProgress) + 'px';
+
+          // 微小バウンス
+          const microBounce = Math.sin(rollProgress * Math.PI * 6) * (1 - rollProgress) * 8;
+          actor1.style.top = (landY - Math.abs(microBounce)) + 'px';
+          actor2.style.top = (landY - Math.abs(microBounce * 0.7)) + 'px';
+
+          // 影も連動
+          const shadowBounce = 1 - Math.abs(microBounce) / 16;
+          shadow1.style.opacity = 0.25 * shadowBounce;
+          shadow2.style.opacity = 0.25 * shadowBounce;
+
+        } else {
+          // Phase 3: 着地完了 → ズームイン
+          clearInterval(animTimer);
+
+          actor1.style.top = landY + 'px';
+          actor2.style.top = landY + 'px';
+          cube1.style.transform = `rotateX(${totalSpinX1}deg) rotateY(${totalSpinY1}deg)`;
+          cube2.style.transform = `rotateX(${totalSpinX2}deg) rotateY(${totalSpinY2}deg)`;
+          shadow1.style.opacity = '0.25';
+          shadow2.style.opacity = '0.25';
+          shadow1.style.transform = 'scaleX(1)';
+          shadow2.style.transform = 'scaleX(1)';
+
+          setTimeout(() => {
+            totalDisplay.textContent = `合計: ${face1 + face2}`;
+            totalDisplay.classList.add('dice-table__total--zoom');
+            rollButton.disabled = false;
+          }, zoomDelay);
+        }
+      }, FRAME_INTERVAL);
+    }
+
+    rollButton.addEventListener('click', animateDiceRoll);
+  </script>
+</body>
+</html>

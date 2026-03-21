@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Test coverage
+coverage/
+
+# Claude Code local settings
+.claude/
+
+# Secrets and keys
+.env
+.env.*
+*.pem
+*.key
