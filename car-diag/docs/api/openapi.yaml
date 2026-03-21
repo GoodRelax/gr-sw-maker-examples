@@ -1,0 +1,1184 @@
+openapi: 3.0.3
+info:
+  title: car-diag Internal Diagnostic Service API
+  description: |
+    car-diag アプリケーションの内部診断サービスインターフェースを OpenAPI 3.0 形式で定義する。
+    本仕様はデスクトップアプリケーション内部の Use Case 層が提供するサービスを REST API として
+    構造化したものであり、将来の REST ラッパー公開やテストエンジニアによる検証に使用する。
+
+    実際の通信は ELM327 Bluetooth ドングル経由のシリアル通信で行われるが、
+    本仕様では論理的なサービスインターフェースとして記述する。
+  version: 0.2.0
+  contact:
+    name: car-diag Development Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server (future REST wrapper)
+
+tags:
+  - name: connection
+    description: ELM327 接続管理 (FR-01, FR-02)
+  - name: ecu
+    description: ECU 自動スキャン (FR-03)
+  - name: cache
+    description: スキャン結果キャッシュ (FR-04)
+  - name: did
+    description: DID スキャン (FR-05)
+  - name: dtc
+    description: DTC 取得・消去 (FR-06, FR-07)
+  - name: dashboard
+    description: 車両データダッシュボード (FR-08)
+  - name: recording
+    description: データ記録 (FR-09)
+
+paths:
+  /connection/ports:
+    get:
+      tags:
+        - connection
+      summary: 利用可能な COM ポート一覧を取得する
+      description: |
+        Windows 上の利用可能な COM ポートを列挙する。
+        Bluetooth ペアリング済みの ELM327 ドングルは仮想 COM ポートとして表示される。
+        traces: FR-01a, HWR-01, HWR-02
+      operationId: listComPorts
+      responses:
+        "200":
+          description: COM ポート一覧を返す
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComPortInfo"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /connection/connect:
+    post:
+      tags:
+        - connection
+      summary: ELM327 に接続する
+      description: |
+        指定された COM ポートで ELM327 との接続を確立する。
+        ATZ -> ATE0 -> ATL0 -> ATS1 -> ATH1 -> ATSP0 の初期化シーケンスを実行し、
+        PID 自動検出（0100/0120/0140/0160）を行う。
+        traces: FR-01b, FR-01c, HWR-03, HWR-04, HWR-05
+      operationId: connectElm327
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectRequest"
+      responses:
+        "200":
+          description: 接続成功。検出された PID 一覧と ELM327 バージョンを返す
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "408":
+          description: ELM327 応答タイムアウト（5 秒以内に応答なし）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /connection/disconnect:
+    post:
+      tags:
+        - connection
+      summary: ELM327 との接続を切断する
+      description: |
+        シリアルポートを閉じて S_DISCONNECTED 状態に遷移する。
+        traces: FR-01d
+      operationId: disconnectElm327
+      responses:
+        "200":
+          description: 切断成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DisconnectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /connection/state:
+    get:
+      tags:
+        - connection
+      summary: 現在の接続状態を取得する
+      description: |
+        FSA（有限状態機械）の現在の状態を返す。
+        traces: FR-02, FR-01f
+      operationId: getConnectionState
+      responses:
+        "200":
+          description: 現在の接続状態
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionStateResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /ecu/scan:
+    post:
+      tags:
+        - ecu
+      summary: ECU 自動スキャンを実行する
+      description: |
+        CAN バス上の ECU スキャン（UDS TesterPresent、CAN ID 0x7E0-0x7E7）と
+        KWP2000 アドレススキャン（StartCommunication、addr 0x01-0xFF）を順次実行する。
+        検出結果はキャッシュに保存される。
+        traces: FR-03a, FR-03b, FR-03c, FR-03e
+      operationId: scanEcus
+      responses:
+        "200":
+          description: ECU スキャン完了。検出された ECU 一覧を返す
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EcuScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: ECU が 1 つも検出されなかった (traces FR-03f)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /ecu/scan/abort:
+    post:
+      tags:
+        - ecu
+      summary: ECU スキャンを中断する
+      description: |
+        進行中の ECU スキャンを安全に中断する。
+        traces: FR-02c
+      operationId: abortEcuScan
+      responses:
+        "200":
+          description: スキャン中断成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbortResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /cache/{vin}:
+    get:
+      tags:
+        - cache
+      summary: VIN に対応するキャッシュを取得する
+      description: |
+        指定 VIN のスキャン結果キャッシュを読み込む。
+        traces: FR-04b
+      operationId: getCache
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          description: 車両識別番号（17 桁）またはユーザー入力の識別名
+          schema:
+            type: string
+      responses:
+        "200":
+          description: キャッシュデータ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheData"
+        "404":
+          description: 指定 VIN のキャッシュが存在しない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    delete:
+      tags:
+        - cache
+      summary: VIN に対応するキャッシュを削除する
+      description: |
+        指定 VIN のキャッシュファイルを削除する。
+        traces: FR-04e
+      operationId: deleteCache
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: キャッシュ削除成功
+        "404":
+          description: 指定 VIN のキャッシュが存在しない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /did/scan:
+    post:
+      tags:
+        - did
+      summary: DID スキャンを実行する
+      description: |
+        UDS 対応 ECU に対して DID スキャンを実行する。
+        プリセット範囲（F400-F4FF, F600-F6FF 等）または全範囲（0x0000-0xFFFF）を選択可能。
+        中断された前回スキャンが存在する場合は自動的に再開する。
+        traces: FR-05a, FR-05b, FR-05c, FR-05f
+      operationId: scanDids
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DidScanRequest"
+      responses:
+        "200":
+          description: DID スキャン完了。検出された DID 一覧を返す
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DidScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /did/scan/abort:
+    post:
+      tags:
+        - did
+      summary: DID スキャンを中断する
+      description: |
+        進行中の DID スキャンを安全に中断し、進捗をキャッシュに保存する。
+        traces: FR-05e
+      operationId: abortDidScan
+      responses:
+        "200":
+          description: DID スキャン中断成功。中断位置がキャッシュに保存された
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DidScanAbortResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /dtc/read:
+    post:
+      tags:
+        - dtc
+      summary: DTC を読み取る
+      description: |
+        スキャン済みの全 ECU（または指定 ECU）から DTC を読み取る。
+        各 ECU のプロトコルに応じた読取コマンドを使用する。
+        - Legacy OBD: Mode 03 (stored) / Mode 07 (pending)
+        - UDS: SID 19 02 FF
+        - KWP2000: SID 18 -> SID 13 フォールバック
+        traces: FR-06a, FR-06b, FR-06c, FR-06f
+      operationId: readDtcs
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DtcReadRequest"
+      responses:
+        "200":
+          description: DTC 読取完了。ECU ごとにグループ化された DTC 一覧を返す
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DtcReadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: ECU スキャンが未実施
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /dtc/clear:
+    post:
+      tags:
+        - dtc
+      summary: DTC を消去する
+      description: |
+        対象 ECU の DTC を消去する。
+        - Legacy OBD: Mode 04
+        - UDS: SID 14 FF FF FF
+        - KWP2000: SID 14 FF 00
+        traces: FR-07a, FR-07b, FR-07c, FR-07d
+      operationId: clearDtcs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DtcClearRequest"
+      responses:
+        "200":
+          description: DTC 消去成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DtcClearResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: ECU スキャンが未実施
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: DTC 消去に失敗（NRC conditionsNotCorrect 等）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /dashboard/start:
+    post:
+      tags:
+        - dashboard
+      summary: ダッシュボードモニタリングを開始する
+      description: |
+        検出済みパラメータのラウンドロビンポーリングを開始する。
+        traces: FR-08a
+      operationId: startDashboard
+      responses:
+        "200":
+          description: モニタリング開始成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStartResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /dashboard/stop:
+    post:
+      tags:
+        - dashboard
+      summary: ダッシュボードモニタリングを停止する
+      description: |
+        ポーリングを停止し S_CONNECTED に遷移する。
+        traces: FR-08a
+      operationId: stopDashboard
+      responses:
+        "200":
+          description: モニタリング停止成功
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /dashboard/parameters:
+    get:
+      tags:
+        - dashboard
+      summary: 現在のパラメータ値を取得する
+      description: |
+        最新のポーリング結果を返す。PID は変換式適用後の物理値、DID は生データ + hex 値を含む。
+        traces: FR-08a, FR-08b
+      operationId: getDashboardParameters
+      responses:
+        "200":
+          description: 現在のパラメータ値一覧
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardParametersResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /recording/start:
+    post:
+      tags:
+        - recording
+      summary: データ記録を開始する
+      description: |
+        TSV ファイルへのデータ記録を開始する。ヘッダー行を出力し、
+        500ms 間隔（目標）でパラメータ値を記録する。
+        traces: FR-09a, FR-09b, FR-09c
+      operationId: startRecording
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingStartRequest"
+      responses:
+        "200":
+          description: 記録開始成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingStartResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /recording/stop:
+    post:
+      tags:
+        - recording
+      summary: データ記録を停止する
+      description: |
+        TSV ファイルを閉じて記録を終了する。
+        traces: FR-09d
+      operationId: stopRecording
+      responses:
+        "200":
+          description: 記録停止成功。記録統計情報を返す
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingStopResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /recording/status:
+    get:
+      tags:
+        - recording
+      summary: 記録中のステータスを取得する
+      description: |
+        記録時間と記録行数を返す。
+        traces: FR-09e
+      operationId: getRecordingStatus
+      responses:
+        "200":
+          description: 記録ステータス
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingStatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+components:
+  schemas:
+    ComPortInfo:
+      type: object
+      description: COM ポート情報
+      required:
+        - port_name
+        - description
+        - hwid
+      properties:
+        port_name:
+          type: string
+          description: COM ポート名
+          example: COM3
+        description:
+          type: string
+          description: ポートの説明
+          example: Standard Serial over Bluetooth link
+        hwid:
+          type: string
+          description: ハードウェア ID
+          example: BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}
+
+    ConnectRequest:
+      type: object
+      description: ELM327 接続要求
+      required:
+        - port_name
+      properties:
+        port_name:
+          type: string
+          description: 接続先 COM ポート名
+          example: COM3
+        baudrate:
+          type: integer
+          description: ボーレート（デフォルト 38400）
+          default: 38400
+          example: 38400
+        timeout_seconds:
+          type: number
+          format: float
+          description: 応答タイムアウト秒数（デフォルト 5.0）
+          default: 5.0
+          example: 5.0
+
+    ConnectResponse:
+      type: object
+      description: ELM327 接続結果
+      required:
+        - elm327_version
+        - detected_protocol
+        - supported_pids
+        - connection_state
+      properties:
+        elm327_version:
+          type: string
+          description: ELM327 バージョン文字列
+          example: ELM327 v1.5
+        detected_protocol:
+          type: string
+          description: 自動検出されたプロトコル名
+          example: ISO 15765-4 (CAN 11/500)
+        supported_pids:
+          type: array
+          description: 検出された PID の一覧
+          items:
+            type: string
+          example: ["01", "03", "04", "05", "06", "07", "0C", "0D", "0E", "0F", "10", "11"]
+        connection_state:
+          type: string
+          enum:
+            - S_CONNECTED
+          description: 接続後の状態
+        vin:
+          type: string
+          nullable: true
+          description: VIN（取得できた場合）
+          example: JT2BG22K1Y0123456
+
+    DisconnectResponse:
+      type: object
+      description: 切断結果
+      required:
+        - connection_state
+      properties:
+        connection_state:
+          type: string
+          enum:
+            - S_DISCONNECTED
+          description: 切断後の状態
+
+    ConnectionStateResponse:
+      type: object
+      description: 現在の接続状態
+      required:
+        - connection_state
+      properties:
+        connection_state:
+          type: string
+          enum:
+            - S_DISCONNECTED
+            - S_CONNECTING
+            - S_CONNECTED
+            - S_ECU_SCANNING
+            - S_DID_SCANNING
+            - S_DTC_READING
+            - S_DTC_CLEARING
+            - S_MONITORING
+            - S_RECORDING
+            - S_PROTOCOL_SWITCHING
+            - S_ERROR
+          description: FSA の現在の状態
+        port_name:
+          type: string
+          nullable: true
+          description: 接続中の COM ポート名（接続中のみ）
+          example: COM3
+        protocol_name:
+          type: string
+          nullable: true
+          description: 検出されたプロトコル名（接続中のみ）
+          example: ISO 15765-4 (CAN 11/500)
+
+    EcuInfo:
+      type: object
+      description: ECU 情報
+      required:
+        - ecu_identifier
+        - ecu_display_name
+        - protocol_type
+        - response_id
+      properties:
+        ecu_identifier:
+          type: string
+          description: ECU 識別子（CAN ID または KWP アドレス）
+          example: "7E0"
+        ecu_display_name:
+          type: string
+          description: ECU 表示名（推定名）
+          example: Engine ECU
+        protocol_type:
+          type: string
+          enum:
+            - LEGACY_OBD
+            - UDS
+            - KWP2000
+          description: 使用プロトコル
+        response_id:
+          type: string
+          description: 応答 CAN ID または KWP アドレス
+          example: "7E8"
+
+    EcuScanResponse:
+      type: object
+      description: ECU スキャン結果
+      required:
+        - ecu_list
+        - ecu_count
+      properties:
+        ecu_list:
+          type: array
+          items:
+            $ref: "#/components/schemas/EcuInfo"
+        ecu_count:
+          type: integer
+          description: 検出された ECU 数
+          example: 4
+
+    AbortResponse:
+      type: object
+      description: 中断結果
+      required:
+        - aborted
+        - connection_state
+      properties:
+        aborted:
+          type: boolean
+          description: 中断が成功したか
+        connection_state:
+          type: string
+          description: 中断後の状態
+
+    CacheData:
+      type: object
+      description: キャッシュデータ
+      required:
+        - vin
+        - created_at
+        - last_accessed_at
+      properties:
+        vin:
+          type: string
+          description: VIN またはユーザー識別名
+          example: JT2BG22K1Y0123456
+        vehicle_nickname:
+          type: string
+          nullable: true
+          description: ユーザー入力の識別名
+        created_at:
+          type: string
+          format: date-time
+          description: 初回作成日時
+        last_accessed_at:
+          type: string
+          format: date-time
+          description: 最終アクセス日時
+        ecu_scan_results:
+          type: array
+          items:
+            $ref: "#/components/schemas/EcuInfo"
+        supported_pids:
+          type: array
+          items:
+            type: string
+        did_scan_results:
+          type: array
+          items:
+            $ref: "#/components/schemas/DidScanEntry"
+        did_scan_progress:
+          $ref: "#/components/schemas/DidScanProgress"
+
+    DidScanEntry:
+      type: object
+      description: DID スキャン結果エントリ
+      required:
+        - ecu_identifier
+        - did_id
+        - byte_count
+      properties:
+        ecu_identifier:
+          type: string
+          description: ECU 識別子
+        did_id:
+          type: string
+          description: DID 識別子（hex 文字列）
+          example: "F400"
+        byte_count:
+          type: integer
+          description: 応答バイト数
+
+    DidScanProgress:
+      type: object
+      description: DID スキャン中断位置
+      nullable: true
+      properties:
+        ecu_index:
+          type: integer
+          description: 中断した ECU インデックス
+        last_scanned_did:
+          type: integer
+          description: 最後にスキャンした DID（整数値）
+        completed:
+          type: boolean
+          description: 完了フラグ
+
+    DidScanRequest:
+      type: object
+      description: DID スキャン要求
+      required:
+        - scan_mode
+      properties:
+        scan_mode:
+          type: string
+          enum:
+            - preset
+            - full
+          description: |
+            preset: 主要 DID 範囲（F400-F4FF, F600-F6FF 等）
+            full: 全範囲（0x0000-0xFFFF）
+        target_ecu_identifiers:
+          type: array
+          items:
+            type: string
+          description: 対象 ECU 識別子（省略時は全 UDS ECU）
+
+    DidScanResponse:
+      type: object
+      description: DID スキャン結果
+      required:
+        - did_list
+        - did_count
+        - scan_completed
+      properties:
+        did_list:
+          type: array
+          items:
+            $ref: "#/components/schemas/DidScanEntry"
+        did_count:
+          type: integer
+          description: 検出された DID 数
+        scan_completed:
+          type: boolean
+          description: スキャンが完了したか（中断の場合 false）
+
+    DidScanAbortResponse:
+      type: object
+      description: DID スキャン中断結果
+      required:
+        - aborted
+        - ecu_index
+        - last_scanned_did
+        - found_did_count
+      properties:
+        aborted:
+          type: boolean
+          description: 中断成功フラグ
+        ecu_index:
+          type: integer
+          description: 中断時の ECU インデックス
+        last_scanned_did:
+          type: integer
+          description: 最後にスキャンした DID
+        found_did_count:
+          type: integer
+          description: 中断時点の検出 DID 数
+
+    DtcEntry:
+      type: object
+      description: DTC エントリ
+      required:
+        - dtc_code
+        - status_byte
+        - description
+        - ecu_identifier
+        - protocol_type
+      properties:
+        dtc_code:
+          type: string
+          description: DTC コード
+          example: P0300
+        status_byte:
+          type: integer
+          description: ステータスバイト（0-255）
+          example: 8
+        description:
+          type: string
+          description: DTC 説明文（英語）。未知の場合は "Unknown"
+          example: Random/Multiple Cylinder Misfire Detected
+        ecu_identifier:
+          type: string
+          description: 検出元 ECU 識別子
+          example: "7E0"
+        protocol_type:
+          type: string
+          enum:
+            - LEGACY_OBD
+            - UDS
+            - KWP2000
+          description: 検出に使用したプロトコル
+        dtc_type:
+          type: string
+          enum:
+            - stored
+            - pending
+          description: DTC 種別（Legacy OBD の場合）
+
+    DtcReadRequest:
+      type: object
+      description: DTC 読取要求
+      properties:
+        target_ecu_identifiers:
+          type: array
+          items:
+            type: string
+          description: 対象 ECU 識別子（省略時は全 ECU）
+
+    DtcReadResponse:
+      type: object
+      description: DTC 読取結果
+      required:
+        - ecu_dtc_groups
+        - total_dtc_count
+      properties:
+        ecu_dtc_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/EcuDtcGroup"
+        total_dtc_count:
+          type: integer
+          description: 全 ECU の DTC 合計数
+          example: 3
+
+    EcuDtcGroup:
+      type: object
+      description: ECU ごとの DTC グループ
+      required:
+        - ecu_info
+        - dtc_list
+        - dtc_count
+      properties:
+        ecu_info:
+          $ref: "#/components/schemas/EcuInfo"
+        dtc_list:
+          type: array
+          items:
+            $ref: "#/components/schemas/DtcEntry"
+        dtc_count:
+          type: integer
+          description: この ECU の DTC 数
+
+    DtcClearRequest:
+      type: object
+      description: DTC 消去要求
+      required:
+        - target_scope
+      properties:
+        target_scope:
+          type: string
+          enum:
+            - all_ecus
+            - selected_ecus
+          description: 消去対象範囲
+        target_ecu_identifiers:
+          type: array
+          items:
+            type: string
+          description: 対象 ECU 識別子（target_scope が selected_ecus の場合のみ）
+
+    DtcClearResponse:
+      type: object
+      description: DTC 消去結果
+      required:
+        - clear_results
+      properties:
+        clear_results:
+          type: array
+          items:
+            type: object
+            required:
+              - ecu_identifier
+              - success
+            properties:
+              ecu_identifier:
+                type: string
+                description: ECU 識別子
+              success:
+                type: boolean
+                description: 消去成功フラグ
+              error_message:
+                type: string
+                nullable: true
+                description: エラーメッセージ（失敗時のみ）
+
+    VehicleParameterReading:
+      type: object
+      description: パラメータ読取値
+      required:
+        - parameter_identifier
+        - raw_value
+        - ecu_identifier
+        - timestamp
+      properties:
+        parameter_identifier:
+          type: string
+          description: パラメータ識別子（PID / DID）
+          example: "0C"
+        display_name:
+          type: string
+          description: パラメータ表示名
+          example: Engine RPM
+        raw_value:
+          type: string
+          description: 生データ（hex 文字列）
+          example: 1AF8
+        physical_value:
+          type: number
+          format: float
+          nullable: true
+          description: 物理値（変換式適用後。変換式がない場合は null）
+          example: 1726.0
+        unit:
+          type: string
+          nullable: true
+          description: 単位
+          example: rpm
+        ecu_identifier:
+          type: string
+          description: 読取元 ECU 識別子
+        timestamp:
+          type: number
+          format: double
+          description: 読取タイムスタンプ（Unix epoch 秒）
+
+    DashboardStartResponse:
+      type: object
+      description: ダッシュボード開始結果
+      required:
+        - monitoring_parameters
+        - connection_state
+      properties:
+        monitoring_parameters:
+          type: array
+          items:
+            type: string
+          description: モニタリング対象パラメータ一覧
+        connection_state:
+          type: string
+          enum:
+            - S_MONITORING
+
+    DashboardParametersResponse:
+      type: object
+      description: ダッシュボードパラメータ値
+      required:
+        - readings
+        - polling_cycle_ms
+      properties:
+        readings:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleParameterReading"
+        polling_cycle_ms:
+          type: integer
+          description: 最新ポーリングサイクルの実測時間（ms）
+          example: 480
+
+    RecordingStartRequest:
+      type: object
+      description: 記録開始要求
+      required:
+        - file_path
+      properties:
+        file_path:
+          type: string
+          description: TSV ファイルの保存先パス
+          example: C:/Users/user/Documents/car-diag-log.tsv
+
+    RecordingStartResponse:
+      type: object
+      description: 記録開始結果
+      required:
+        - file_path
+        - connection_state
+      properties:
+        file_path:
+          type: string
+          description: 記録先ファイルパス
+        connection_state:
+          type: string
+          enum:
+            - S_RECORDING
+
+    RecordingStopResponse:
+      type: object
+      description: 記録停止結果
+      required:
+        - total_rows
+        - recording_duration_seconds
+        - file_path
+      properties:
+        total_rows:
+          type: integer
+          description: 記録した行数
+          example: 600
+        recording_duration_seconds:
+          type: number
+          format: float
+          description: 記録時間（秒）
+          example: 300.5
+        file_path:
+          type: string
+          description: 記録ファイルパス
+
+    RecordingStatusResponse:
+      type: object
+      description: 記録ステータス
+      required:
+        - is_recording
+        - row_count
+        - elapsed_seconds
+      properties:
+        is_recording:
+          type: boolean
+          description: 記録中かどうか
+        row_count:
+          type: integer
+          description: 現在の記録行数
+          example: 150
+        elapsed_seconds:
+          type: number
+          format: float
+          description: 記録経過時間（秒）
+          example: 75.0
+        file_path:
+          type: string
+          description: 記録先ファイルパス
+
+    ErrorResponse:
+      type: object
+      description: エラーレスポンス
+      required:
+        - error_code
+        - message
+      properties:
+        error_code:
+          type: string
+          description: エラーコード（Ch4.4 エラーコード体系）
+          example: E-CONN-002
+        message:
+          type: string
+          description: エラーメッセージ（日本語）
+          example: ELM327 が応答しません
+        detail:
+          type: string
+          nullable: true
+          description: 詳細情報
+
+  responses:
+    BadRequest:
+      description: リクエスト形式が不正
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: 認証が必要（将来の REST 公開時）
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: 操作権限がない（将来の REST 公開時）
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnprocessableEntity:
+      description: リクエストの内容が処理できない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalServerError:
+      description: 内部エラー
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Bearer トークン認証（将来の REST 公開時に使用）
+
+security: []
