@@ -1,4 +1,3 @@
-``````markdown
 # gr-sw-maker Framework Improvement Proposal
 
 **Date:** 2026-03-22
@@ -680,4 +679,4 @@ These proposals originated from concrete issues observed during development:
 - Michael Nygard: Documenting Architecture Decisions (ADR format)
 - Robert C. Martin: Stable Dependencies Principle (SDP)
 - gr-sw-maker process-rules v0.0.0 (current framework baseline)
-``````
+
