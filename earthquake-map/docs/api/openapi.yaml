@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: USGS Earthquake API - Consumed Contract
+  description: >
+    OpenAPI specification documenting the subset of the USGS Earthquake Hazards
+    Program FDSNWS event API consumed by the Earthquake Map application.
+    This is a consumer-side contract, not a provider specification.
+    The authoritative documentation is at https://earthquake.usgs.gov/fdsnws/event/1/
+  version: 1.0.0
+  contact:
+    name: USGS Earthquake Hazards Program
+    url: https://earthquake.usgs.gov/fdsnws/event/1/
+
+servers:
+  - url: https://earthquake.usgs.gov/fdsnws/event/1
+    description: USGS Earthquake API production server
+
+paths:
+  /query:
+    get:
+      operationId: queryEarthquakes
+      summary: Query earthquake events
+      description: >
+        Fetches earthquake events from USGS matching the specified time range,
+        minimum magnitude, and response format. The Earthquake Map application
+        uses this endpoint for all data retrieval (FR-02, FR-09, FR-11).
+      parameters:
+        - name: format
+          in: query
+          required: true
+          description: Response format. This application always uses geojson.
+          schema:
+            type: string
+            enum:
+              - geojson
+            default: geojson
+        - name: starttime
+          in: query
+          required: true
+          description: >
+            Start date/time for the query in ISO 8601 format (YYYY-MM-DDTHH:MM:SS).
+            Traces: FR-07, FR-08.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-03-15T00:00:00"
+        - name: endtime
+          in: query
+          required: true
+          description: >
+            End date/time for the query in ISO 8601 format (YYYY-MM-DDTHH:MM:SS).
+            Traces: FR-07, FR-08.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-03-22T00:00:00"
+        - name: minmagnitude
+          in: query
+          required: false
+          description: >
+            Minimum magnitude filter. Range 0.0 to 9.0.
+            Traces: FR-10, FR-11.
+          schema:
+            type: number
+            format: float
+            minimum: 0.0
+            maximum: 9.0
+            default: 1.0
+          example: 1.0
+        - name: limit
+          in: query
+          required: false
+          description: >
+            Maximum number of events to return. USGS enforces a hard cap of 20000.
+            Traces: CON-03, NFR-05.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20000
+            default: 20000
+          example: 20000
+        - name: orderby
+          in: query
+          required: false
+          description: Sort order for results.
+          schema:
+            type: string
+            enum:
+              - time
+              - time-asc
+              - magnitude
+              - magnitude-asc
+            default: time
+      responses:
+        "200":
+          description: Successful response containing earthquake events in GeoJSON format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EarthquakeGeoJSON"
+        "400":
+          description: Bad request. Invalid query parameters.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Bad Request: starttime must be before endtime"
+        "401":
+          description: Unauthorized. Not expected for public API but included for completeness.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          description: Forbidden. Rate limiting or access restriction.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Not found. Invalid endpoint path.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "422":
+          description: Unprocessable entity. Semantically invalid parameters.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Error: too many results, narrow your search"
+        "500":
+          description: Internal server error on USGS side.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  schemas:
+    EarthquakeGeoJSON:
+      type: object
+      description: GeoJSON FeatureCollection containing earthquake events.
+      required:
+        - type
+        - metadata
+        - features
+      properties:
+        type:
+          type: string
+          enum:
+            - FeatureCollection
+        metadata:
+          $ref: "#/components/schemas/Metadata"
+        features:
+          type: array
+          items:
+            $ref: "#/components/schemas/EarthquakeFeature"
+
+    Metadata:
+      type: object
+      description: Query metadata returned by USGS.
+      required:
+        - generated
+        - url
+        - title
+        - status
+        - count
+      properties:
+        generated:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when response was generated.
+        url:
+          type: string
+          format: uri
+          description: The query URL that produced this response.
+        title:
+          type: string
+          description: Human-readable title of the dataset.
+        status:
+          type: integer
+          description: HTTP status code.
+        count:
+          type: integer
+          description: Number of earthquake events in this response. Used by StatusDisplay (FR-14).
+
+    EarthquakeFeature:
+      type: object
+      description: A single earthquake event as a GeoJSON Feature.
+      required:
+        - type
+        - properties
+        - geometry
+        - id
+      properties:
+        type:
+          type: string
+          enum:
+            - Feature
+        id:
+          type: string
+          description: Unique earthquake event identifier. Maps to EarthquakeEvent.earthquake_id.
+        properties:
+          $ref: "#/components/schemas/EarthquakeProperties"
+        geometry:
+          $ref: "#/components/schemas/EarthquakeGeometry"
+
+    EarthquakeProperties:
+      type: object
+      description: Properties of an earthquake event.
+      required:
+        - mag
+        - place
+        - time
+        - url
+      properties:
+        mag:
+          type: number
+          format: float
+          nullable: true
+          description: Earthquake magnitude. Maps to EarthquakeEvent.magnitude.
+          example: 5.2
+        place:
+          type: string
+          nullable: true
+          description: Text description of named geographic region. Maps to EarthquakeEvent.location_name.
+          example: "10 km SSW of Pahala, Hawaii"
+        time:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds of event origin. Maps to EarthquakeEvent.event_time_utc.
+          example: 1711108800000
+        url:
+          type: string
+          format: uri
+          description: URL to USGS event detail page. Maps to EarthquakeEvent.usgs_detail_url.
+          example: "https://earthquake.usgs.gov/earthquakes/eventpage/us7000m1ab"
+        title:
+          type: string
+          description: Human-readable event title.
+          example: "M 5.2 - 10 km SSW of Pahala, Hawaii"
+        type:
+          type: string
+          description: Type of seismic event.
+          example: "earthquake"
+
+    EarthquakeGeometry:
+      type: object
+      description: Geographic coordinates of the earthquake epicenter.
+      required:
+        - type
+        - coordinates
+      properties:
+        type:
+          type: string
+          enum:
+            - Point
+        coordinates:
+          type: array
+          description: "[longitude, latitude, depth_km]. Maps to EarthquakeEvent longitude, latitude, depth_km."
+          minItems: 3
+          maxItems: 3
+          items:
+            type: number
+            format: float
+          example: [-155.4712, 19.1856, 34.2]
+
+  securitySchemes:
+    none:
+      type: http
+      scheme: basic
+      description: >
+        The USGS API is fully public and requires no authentication.
+        This section is included for OpenAPI schema completeness only.
+        The application SHALL NOT send any authentication headers (CON-02).
+
+security: []

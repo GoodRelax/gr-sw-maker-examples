@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Earthquake Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin="">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh; display: flex; flex-direction: column;
+    }
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 16px; background: #2c3e50; color: #fff;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 600; }
+    #earthquake-count { font-size: 0.9rem; opacity: 0.9; }
+    .app-layout { display: flex; flex: 1; overflow: hidden; }
+    #control-panel {
+      width: 240px; padding: 16px; background: #ecf0f1;
+      border-right: 1px solid #bdc3c7; overflow-y: auto; flex-shrink: 0;
+    }
+    #control-panel h2 {
+      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: #7f8c8d; margin-bottom: 8px; margin-top: 16px;
+    }
+    #control-panel h2:first-child { margin-top: 0; }
+    .preset-group { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .time-preset {
+      padding: 6px 8px; border: 1px solid #bdc3c7; background: #fff;
+      border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .time-preset:hover { background: #d5dbdb; }
+    .time-preset.active { background: #3498db; color: #fff; border-color: #2980b9; }
+    .date-inputs { display: flex; flex-direction: column; gap: 6px; }
+    .date-inputs label { font-size: 0.8rem; color: #555; }
+    .date-inputs input[type="date"] {
+      padding: 4px 6px; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 0.85rem;
+    }
+    .magnitude-control { display: flex; flex-direction: column; gap: 4px; }
+    .magnitude-control input[type="range"] { width: 100%; }
+    .magnitude-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: #555; }
+    #update-button {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; margin-top: 16px; padding: 10px 16px;
+      background: #2980b9; color: #fff; border: none; border-radius: 4px;
+      font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
+    }
+    #update-button:hover:not(:disabled) { background: #2471a3; }
+    #update-button:disabled { background: #85c1e9; cursor: not-allowed; }
+    .update-button-spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    .update-button-spinner[hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #error-message {
+      display: none; padding: 8px; background: #e74c3c; color: #fff;
+      border-radius: 4px; font-size: 0.8rem; margin-top: 8px;
+    }
+    #earthquake-map { flex: 1; min-height: 0; }
+    .earthquake-popup strong { font-size: 1.1rem; }
+    .earthquake-popup span { display: block; margin: 2px 0; font-size: 0.85rem; }
+    .earthquake-popup a { color: #2980b9; font-size: 0.85rem; }
+    @media (max-width: 768px) {
+      .app-layout { flex-direction: column; }
+      #control-panel { width: 100%; border-right: none; border-bottom: 1px solid #bdc3c7; max-height: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Earthquake Map</h1>
+    <span id="earthquake-count">Loading...</span>
+  </header>
+
+  <div class="app-layout">
+    <aside id="control-panel">
+      <h2>Time Range</h2>
+      <div class="preset-group">
+        <button class="time-preset" data-range="1h">1 Hour</button>
+        <button class="time-preset" data-range="24h">24 Hours</button>
+        <button class="time-preset" data-range="7d">7 Days</button>
+        <button class="time-preset" data-range="30d">30 Days</button>
+      </div>
+
+      <h2>Custom Range</h2>
+      <div class="date-inputs">
+        <label for="custom-start-date">Start</label>
+        <input type="date" id="custom-start-date">
+        <label for="custom-end-date">End</label>
+        <input type="date" id="custom-end-date">
+      </div>
+
+      <h2>Min Magnitude</h2>
+      <div class="magnitude-control">
+        <input type="range" id="magnitude-slider" min="0" max="9" step="0.1" value="1.0">
+        <div class="magnitude-label">
+          <span>0.0</span>
+          <span>M <span id="magnitude-display">1.0</span></span>
+          <span>9.0</span>
+        </div>
+      </div>
+
+      <button id="update-button" type="button">
+        <span class="update-button-spinner" hidden></span>
+        <span class="update-button-label">Update</span>
+      </button>
+
+      <div id="error-message"></div>
+    </aside>
+
+    <div id="earthquake-map"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""></script>
+  <script>
+    // ===== Domain: Magnitude Scale =====
+    function magnitudeToRadius(magnitude) {
+      if (magnitude < 3.0) return 4;
+      if (magnitude < 5.0) return 7;
+      if (magnitude < 7.0) return 11;
+      return 16;
+    }
+
+    function magnitudeToColor(magnitude) {
+      if (magnitude < 3.0) return '#00CC00';
+      if (magnitude < 5.0) return '#CCCC00';
+      if (magnitude < 7.0) return '#FF8800';
+      return '#CC0000';
+    }
+
+    // ===== Domain: Date Range =====
+    var DATE_PRESETS = {
+      '1h': 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+    };
+
+    function fromPreset(preset_key) {
+      var duration_ms = DATE_PRESETS[preset_key];
+      if (!duration_ms) throw new Error('Unknown preset: ' + preset_key);
+      var end_date = new Date();
+      var start_date = new Date(end_date.getTime() - duration_ms);
+      return { start_date: start_date, end_date: end_date };
+    }
+
+    function isValidDateRange(start_date, end_date) {
+      if (!(start_date instanceof Date) || isNaN(start_date.getTime()))
+        return { valid: false, error_message: 'Invalid start date' };
+      if (!(end_date instanceof Date) || isNaN(end_date.getTime()))
+        return { valid: false, error_message: 'Invalid end date' };
+      if (end_date < start_date)
+        return { valid: false, error_message: 'End date must not precede start date' };
+      var tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+      if (end_date >= tomorrow)
+        return { valid: false, error_message: 'End date must not be in the future' };
+      return { valid: true, error_message: null };
+    }
+
+    // ===== Domain: Earthquake Model =====
+    function createEarthquakeEvent(feature) {
+      var props = feature.properties;
+      var coords = feature.geometry.coordinates;
+      return {
+        earthquake_id: feature.id,
+        magnitude: props.mag,
+        location_name: props.place || 'Unknown location',
+        depth_km: coords[2],
+        event_time_utc: new Date(props.time),
+        latitude: coords[1],
+        longitude: coords[0],
+        usgs_detail_url: props.url,
+      };
+    }
+
+    function parseGeoJSON(geojson) {
+      if (!geojson || !Array.isArray(geojson.features))
+        throw new Error('Invalid GeoJSON: missing features array');
+      var events = geojson.features.map(createEarthquakeEvent);
+      var metadata_count = (geojson.metadata && geojson.metadata.count != null)
+        ? geojson.metadata.count : events.length;
+      return { events: events, metadata_count: metadata_count };
+    }
+
+    // ===== Adapter: USGS Client =====
+    var USGS_API_BASE_URL = 'https://earthquake.usgs.gov/fdsnws/event/1/query';
+    var USGS_EVENT_LIMIT = 20000;
+    var FETCH_TIMEOUT_MS = 30000;
+
+    function buildQueryURL(filter) {
+      var params = new URLSearchParams({
+        format: 'geojson',
+        starttime: filter.start_date.toISOString(),
+        endtime: filter.end_date.toISOString(),
+        minmagnitude: String(filter.minimum_magnitude),
+        limit: String(USGS_EVENT_LIMIT),
+        orderby: 'time',
+      });
+      return USGS_API_BASE_URL + '?' + params.toString();
+    }
+
+    function fetchEarthquakes(filter, abort_signal) {
+      var url = buildQueryURL(filter);
+      var timeout_controller = new AbortController();
+      var timeout_id = setTimeout(function() { timeout_controller.abort(); }, FETCH_TIMEOUT_MS);
+
+      if (abort_signal) {
+        abort_signal.addEventListener('abort', function() { timeout_controller.abort(); }, { once: true });
+      }
+
+      return fetch(url, { signal: timeout_controller.signal })
+        .then(function(response) {
+          clearTimeout(timeout_id);
+          if (!response.ok) throw new Error('USGS API error: HTTP ' + response.status);
+          return response.json().catch(function() {
+            throw new Error('USGS API returned unparseable response');
+          });
+        })
+        .then(function(raw_geojson) {
+          var result = parseGeoJSON(raw_geojson);
+          result.is_capped = result.metadata_count >= USGS_EVENT_LIMIT;
+          return result;
+        })
+        .catch(function(err) {
+          clearTimeout(timeout_id);
+          if (err.name === 'AbortError') {
+            if (abort_signal && abort_signal.aborted) throw new Error('Request cancelled');
+            throw new Error('Request timed out after 30 seconds');
+          }
+          throw err;
+        });
+    }
+
+    // ===== UI: Popup Builder =====
+    function escapeHTML(raw_text) {
+      var div = document.createElement('div');
+      div.textContent = String(raw_text);
+      return div.innerHTML;
+    }
+
+    function buildPopupContent(eq) {
+      return '<div class="earthquake-popup">' +
+        '<strong>M ' + escapeHTML(eq.magnitude != null ? eq.magnitude.toFixed(1) : 'N/A') + '</strong><br>' +
+        '<span>' + escapeHTML(eq.location_name) + '</span><br>' +
+        '<span>Depth: ' + escapeHTML(eq.depth_km != null ? eq.depth_km.toFixed(1) : 'N/A') + ' km</span><br>' +
+        '<span>Time: ' + escapeHTML(eq.event_time_utc ? eq.event_time_utc.toISOString() : 'N/A') + '</span><br>' +
+        '<a href="' + escapeHTML(eq.usgs_detail_url || '') + '" target="_blank" rel="noopener noreferrer">USGS Detail</a>' +
+        '</div>';
+    }
+
+    // ===== UI: Status Display =====
+    function setUpdateButtonLoading(is_loading) {
+      var button = document.getElementById('update-button');
+      if (!button) return;
+      var spinner = button.querySelector('.update-button-spinner');
+      var label = button.querySelector('.update-button-label');
+      button.disabled = is_loading;
+      if (spinner) spinner.hidden = !is_loading;
+      if (label) label.textContent = is_loading ? 'Loading...' : 'Update';
+    }
+
+    function showLoading() {
+      var error_el = document.getElementById('error-message');
+      if (error_el) error_el.style.display = 'none';
+      setUpdateButtonLoading(true);
+    }
+
+    function hideLoading() {
+      setUpdateButtonLoading(false);
+    }
+
+    function showError(error_message) {
+      var error_el = document.getElementById('error-message');
+      if (error_el) {
+        error_el.textContent = error_message;
+        error_el.style.display = 'block';
+      }
+    }
+
+    function updateCount(count, is_capped) {
+      var count_el = document.getElementById('earthquake-count');
+      if (count_el) {
+        var cap_warning = is_capped ? ' (results capped at 20,000)' : '';
+        count_el.textContent = count + ' earthquakes' + cap_warning;
+      }
+    }
+
+    // ===== UI: Map Renderer =====
+    var map_instance = null;
+    var marker_layer = null;
+
+    function initializeMap(container_id) {
+      map_instance = L.map(container_id).setView([20.0, 0.0], 2);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map_instance);
+      marker_layer = L.layerGroup().addTo(map_instance);
+    }
+
+    function clearMarkers() {
+      if (marker_layer) marker_layer.clearLayers();
+    }
+
+    function renderMarkers(earthquake_events) {
+      clearMarkers();
+      for (var i = 0; i < earthquake_events.length; i++) {
+        var eq = earthquake_events[i];
+        var circle = L.circleMarker([eq.latitude, eq.longitude], {
+          radius: magnitudeToRadius(eq.magnitude),
+          fillColor: magnitudeToColor(eq.magnitude),
+          color: '#333', weight: 1, opacity: 0.8, fillOpacity: 0.6,
+        });
+        circle.bindPopup(buildPopupContent(eq));
+        marker_layer.addLayer(circle);
+      }
+    }
+
+    // ===== App =====
+    var current_abort_controller = null;
+
+    function handleFilterChange(filter) {
+      if (current_abort_controller) current_abort_controller.abort();
+      current_abort_controller = new AbortController();
+
+      showLoading();
+      clearMarkers();
+
+      fetchEarthquakes(filter, current_abort_controller.signal)
+        .then(function(result) {
+          hideLoading();
+          updateCount(result.metadata_count, result.is_capped);
+          renderMarkers(result.events);
+        })
+        .catch(function(err) {
+          hideLoading();
+          if (err.message === 'Request cancelled') return;
+          showError(err.message);
+        });
+    }
+
+    // ===== UI: Control Panel =====
+    function initializeApp() {
+      initializeMap('earthquake-map');
+
+      var magnitude_slider = document.getElementById('magnitude-slider');
+      var magnitude_display = document.getElementById('magnitude-display');
+      var custom_start = document.getElementById('custom-start-date');
+      var custom_end = document.getElementById('custom-end-date');
+      var preset_buttons = document.querySelectorAll('.time-preset');
+      var update_button = document.getElementById('update-button');
+
+      var current_minimum_magnitude = 1.0;
+      var current_date_range = fromPreset('7d');
+      var active_preset = '7d';
+
+      function setActivePreset(key) {
+        active_preset = key;
+        for (var i = 0; i < preset_buttons.length; i++) {
+          if (preset_buttons[i].dataset.range === key) {
+            preset_buttons[i].classList.add('active');
+          } else {
+            preset_buttons[i].classList.remove('active');
+          }
+        }
+      }
+
+      function emitFilter() {
+        handleFilterChange({
+          start_date: current_date_range.start_date,
+          end_date: current_date_range.end_date,
+          minimum_magnitude: current_minimum_magnitude,
+        });
+      }
+
+      setActivePreset('7d');
+
+      for (var i = 0; i < preset_buttons.length; i++) {
+        preset_buttons[i].addEventListener('click', function() {
+          var preset_key = this.dataset.range;
+          current_date_range = fromPreset(preset_key);
+          setActivePreset(preset_key);
+          if (custom_start) custom_start.value = '';
+          if (custom_end) custom_end.value = '';
+        });
+      }
+
+      function handleCustomDateChange() {
+        if (!custom_start.value || !custom_end.value) return;
+        var start_date = new Date(custom_start.value);
+        var end_date = new Date(custom_end.value + 'T23:59:59');
+        var validation = isValidDateRange(start_date, end_date);
+        if (!validation.valid) {
+          showError(validation.error_message);
+          return;
+        }
+        current_date_range = { start_date: start_date, end_date: end_date };
+        setActivePreset(null);
+      }
+
+      if (custom_start) custom_start.addEventListener('change', handleCustomDateChange);
+      if (custom_end) custom_end.addEventListener('change', handleCustomDateChange);
+
+      if (magnitude_slider) {
+        magnitude_slider.addEventListener('input', function() {
+          current_minimum_magnitude = parseFloat(magnitude_slider.value);
+          if (magnitude_display) magnitude_display.textContent = current_minimum_magnitude.toFixed(1);
+        });
+        magnitude_slider.addEventListener('change', function() {
+          current_minimum_magnitude = parseFloat(magnitude_slider.value);
+        });
+      }
+
+      if (update_button) {
+        update_button.addEventListener('click', function() { emitFilter(); });
+      }
+
+      // Initial data load
+      emitFilter();
+    }
+
+    // Start when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeApp);
+    } else {
+      initializeApp();
+    }
+  </script>
+</body>
+</html>
